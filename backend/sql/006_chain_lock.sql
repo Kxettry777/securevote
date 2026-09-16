@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS chain_lock (
+  id TINYINT NOT NULL PRIMARY KEY,
+  instance_id CHAR(66) CHARACTER SET ascii COLLATE ascii_bin NOT NULL
+) ENGINE=InnoDB;

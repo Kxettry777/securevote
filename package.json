@@ -1,0 +1,9 @@
+{
+  "name": "securevote",
+  "private": true,
+  "scripts": {
+    "dev": "node backend/scripts/dev.js",
+    "setup": "npm --prefix backend install && npm --prefix frontend install && npm --prefix backend run db:setup",
+    "check": "npm --prefix backend test && npm --prefix backend run test:mysql && npm --prefix frontend run lint && npm --prefix frontend run build"
+  }
+}

@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS election_banners (
+  election_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+  image_data MEDIUMBLOB NOT NULL,
+  version CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  CONSTRAINT banner_election_fk FOREIGN KEY (election_id) REFERENCES elections(id)
+) ENGINE=InnoDB;
