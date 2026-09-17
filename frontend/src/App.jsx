@@ -267,9 +267,7 @@ function App() {
       <a className="skip-link" href="#workspace">Skip to page content</a>
       <aside className="sidebar">
         <div className="sidebar-identity">
-          <div className="brand-mark" aria-hidden="true">
-            SV
-          </div>
+          <ProfileImage />
           <div className="sidebar-account">
             <strong>SecureVote</strong>
             <span>{user.email}</span>

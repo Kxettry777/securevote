@@ -7,6 +7,7 @@ module.exports = async function electionChecks(t, request, { token, voterId, vot
   const { parties, roles, symbolImage } = await require("./registry-fixtures")(request, token);
   const [first, second] = parties;
   const schedule = { title: "Student council", description: "Choose your representatives.", startsAt: new Date(Date.now() + 3600000).toISOString(), endsAt: new Date(Date.now() + 7200000).toISOString(), partyIds: parties.map(p => p.id) };
+  await require("./election-deletion-checks")(t, request, { token, voterId, voterToken, adminId, partyToken: first.token, schedule, symbolImage });
   let electionId, otherId;
   await t.test("symbol selection saves a matching name and image and rejects unknown choices", async () => {
     assert.equal((await request("/registry/symbols")).status, 401);
@@ -188,33 +189,7 @@ module.exports = async function electionChecks(t, request, { token, voterId, vot
     assert.equal((await request("/auth/login", "POST", { email: pending.email, password: "pending-password" })).status, 403);
     assert.equal((await request(`/elections/${otherId}/voters`, "POST", { voterId: result.data.voter.id }, token)).status, 201);
   });
-  await t.test("only admins can remove ended elections and restore participant access", async () => {
-    const path = `/elections/${electionId}`;
-    for (const unauthorized of [voterToken, first.token]) {
-      assert.equal((await request(path, "DELETE", undefined, unauthorized)).status, 403);
-      assert.equal((await request(`${path}/restore`, "POST", undefined, unauthorized)).status, 403);
-      assert.equal((await request("/elections?removed=true", "GET", undefined, unauthorized)).status, 403);
-    }
-    assert.equal((await request(path, "DELETE", undefined, token)).status, 409);
-    assert.equal((await request(`/elections/${otherId}`, "DELETE", undefined, token)).status, 409);
-    await database.execute("UPDATE elections SET ends_at = UTC_TIMESTAMP(3) - INTERVAL 1 SECOND, starts_at = UTC_TIMESTAMP(3) - INTERVAL 2 HOUR WHERE id = ?", [electionId]);
-    const before = (await request(path, "GET", undefined, token)).data;
-    assert.equal((await request(path, "DELETE", undefined, token)).status, 200);
-    assert.equal((await request(path, "DELETE", undefined, token)).status, 409);
-    assert.ok(!(await request("/elections", "GET", undefined, token)).data.elections.some(e => e.id === electionId));
-    assert.equal((await request("/elections?removed=true", "GET", undefined, token)).data.elections[0].id, electionId);
-    for (const unauthorized of [voterToken, first.token]) {
-      assert.equal((await request(path, "GET", undefined, unauthorized)).status, 404);
-      assert.equal((await request(`${path}/results`, "GET", undefined, unauthorized)).status, 404);
-      assert.ok(!(await request("/elections", "GET", undefined, unauthorized)).data.elections.some(e => e.id === electionId));
-    }
-    const after = (await request(path, "GET", undefined, token)).data;
-    assert.deepEqual(after.parties, before.parties);
-    assert.deepEqual(after.voters, before.voters);
-    assert.equal((await request(`${path}/restore`, "POST", undefined, token)).status, 200);
-    assert.equal((await request(path, "GET", undefined, voterToken)).status, 200);
-    assert.equal((await request(`${path}/restore`, "POST", undefined, token)).status, 404);
-  });
+  await database.execute("UPDATE elections SET ends_at = UTC_TIMESTAMP(3) - INTERVAL 1 SECOND, starts_at = UTC_TIMESTAMP(3) - INTERVAL 2 HOUR WHERE id = ?", [electionId]);
   await t.test("audit deletion needs admin confirmation and preserves newer events and elections", async () => {
     const page = (await request("/admin/audit", "GET", undefined, token)).data;
     const entry = page.entries[0];

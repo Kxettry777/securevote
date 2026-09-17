@@ -378,13 +378,6 @@
 .auth-header .brand-lockup {
   padding: 0;
 }
-.auth-header .brand-mark {
-  width: 40px;
-  height: 40px;
-  background: #183551;
-  color: #fff;
-  border-radius: 10px;
-}
 .auth-header .brand-lockup strong {
   color: #183551;
 }
@@ -976,19 +969,6 @@ summary:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.brand-mark {
-  display: grid;
-  width: 37px;
-  height: 37px;
-  flex-shrink: 0;
-  place-items: center;
-  border-radius: 7px;
-  background: #e4b44e;
-  color: #10233f;
-  font-size: 12px;
-  font-weight: 800;
 }
 
 .brand-lockup strong,
@@ -1923,7 +1903,7 @@ input[type="file"]::file-selector-button { margin-right: 12px; padding: 7px 10px
 }
 
 .profile-image { display: block; flex: 0 0 auto; width: 42px; height: 42px; border-radius: 50%; object-fit: cover; border: 1px solid #d7e1ec; background: #edf3f8; }
-.profile-placeholder { display: grid; place-items: center; color: #244968; font-size: 15px; font-weight: 700; }
+.profile-image.profile-placeholder { display: grid; place-items: center; color: #244968; }
 .auth-card-heading { margin-bottom: 28px; }
 .auth-profile-image { width: 76px; height: 76px; margin: 0 auto 20px; font-size: 24px; }
 .account-profile { display: flex; align-items: center; gap: 11px; min-width: 0; }

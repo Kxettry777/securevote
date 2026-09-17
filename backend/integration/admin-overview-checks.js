@@ -38,9 +38,7 @@ module.exports = async function adminOverviewChecks(t, request, { token, voterTo
     await database.execute("UPDATE elections SET starts_at = UTC_TIMESTAMP(3) - INTERVAL 1 MINUTE WHERE id = ?", [otherId]);
     assert.equal((await request("/admin/dashboard", "GET", undefined, token)).data.elections.active, 1);
     await database.execute("UPDATE elections SET starts_at = ? WHERE id = ?", [new Date(schedule.startsAt), otherId]);
-    await request(`/elections/${electionId}`, "DELETE", undefined, token);
-    assert.deepEqual((await request("/admin/dashboard", "GET", undefined, token)).data.elections, { total: 1, upcoming: 1, active: 0, ended: 0 });
-    await request(`/elections/${electionId}/restore`, "POST", undefined, token);
+
   });
   await t.test("party deletion requires an admin, valid ID, and explicit confirmation", async () => {
     assert.equal((await request(route, "DELETE", confirmation)).status, 401);

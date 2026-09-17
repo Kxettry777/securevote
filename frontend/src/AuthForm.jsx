@@ -42,7 +42,7 @@ export function AuthForm({ onLogin, notice, activationToken, onActivationComplet
     }
     return <main className="auth-shell">
     <header className="auth-header">
-      <div className="brand-lockup"><div className="brand-mark" aria-hidden="true">SV</div><div><strong>SecureVote</strong><span>Institutional elections</span></div></div>
+      <div className="brand-lockup"><ProfileImage /><div><strong>SecureVote</strong><span>Institutional elections</span></div></div>
       <span className="auth-header-label">Election access portal</span>
     </header>
     <section className="auth-content" aria-labelledby="auth-heading">

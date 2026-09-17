@@ -60,12 +60,14 @@ for (const parameter of ["id", "candidateId", "voterId"]) {
 }
 
 router.get("/", handle(async (req, res) => {
-  if (req.query.removed !== undefined && req.query.removed !== "true") throw new Election.ElectionError(400, "Invalid election filter");
-  if (req.query.removed && req.account.role !== "admin") throw new Election.ElectionError(403, "Only admins can view removed elections");
-  res.json({ elections: await Election.list(req.account, req.query.removed === "true") });
+  if (req.query.removed !== undefined) throw new Election.ElectionError(400, "Removed elections are no longer available");
+  res.json({ elections: await Election.list(req.account) });
 }));
-router.delete("/:id", requireRole("admin"), handle(async (req, res) => { await Election.remove(req.params.id, req.account); res.json({ message: "Election removed. You can restore it from Removed elections." }); }));
-router.post("/:id/restore", requireRole("admin"), handle(async (req, res) => { await Election.restore(req.params.id, req.account); res.json({ message: "Election restored" }); }));
+router.delete("/:id", requireRole("admin"), handle(async (req, res) => {
+  if (req.body?.confirmation !== "DELETE") throw new Election.ElectionError(400, "Type DELETE to confirm permanent election deletion");
+  await Election.remove(req.params.id, req.account);
+  res.json({ message: "Election permanently deleted" });
+}));
 router.get("/:id", handle(async (req, res) => res.json(await Election.detail(req.params.id, req.account))));
 router.post("/", requireRole("admin"), handle(async (req, res) => res.status(201).json(await Election.create({ ...electionInput(req.body), partyIds: partyIds(req.body?.partyIds) }, req.account))));
 router.patch("/:id", requireRole("admin"), handle(async (req, res) => res.json(await Election.update(req.params.id, electionInput(req.body), req.account))));

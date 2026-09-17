@@ -9,19 +9,19 @@ class ElectionError extends Error {
 const columns = `e.id, e.title, e.description, e.starts_at AS startsAt, e.ends_at AS endsAt,
   e.created_at AS createdAt,
   UTC_TIMESTAMP(3) AS serverTime,
-  (SELECT r.removed_at FROM removed_elections r WHERE r.election_id = e.id) AS removedAt,
   (SELECT b.version FROM election_banners b WHERE b.election_id = e.id) AS bannerVersion,
   CASE WHEN UTC_TIMESTAMP(3) < e.starts_at THEN 'upcoming'
        WHEN UTC_TIMESTAMP(3) < e.ends_at THEN 'active' ELSE 'ended' END AS status,
   (SELECT COUNT(*) FROM candidates c WHERE c.election_id = e.id) AS candidateCount`;
 
 function scope(actor) {
-  const visible = actor.role === "admin" ? "" : " AND NOT EXISTS (SELECT 1 FROM removed_elections r WHERE r.election_id = e.id)";
+  // Keep legacy removals hidden until the one-time permanent cleanup is run.
+  const visible = " AND NOT EXISTS (SELECT 1 FROM removed_elections r WHERE r.election_id = e.id)";
   return visible + (actor.role !== "voter" ? "" : " AND EXISTS (SELECT 1 FROM election_voters ev WHERE ev.election_id = e.id AND ev.voter_id = ?)");
 }
 
-async function list(actor, removed = false) {
-  const rows = await database.execute(`SELECT ${columns} FROM elections e WHERE ${removed && actor.role === "admin" ? "" : "NOT"} EXISTS (SELECT 1 FROM removed_elections r WHERE r.election_id = e.id) ${scope(actor)} ORDER BY e.starts_at DESC, e.id`, actor.role !== "voter" ? [] : [actor.id]);
+async function list(actor) {
+  const rows = await database.execute(`SELECT ${columns} FROM elections e WHERE 1 = 1 ${scope(actor)} ORDER BY e.starts_at DESC, e.id`, actor.role !== "voter" ? [] : [actor.id]);
   return rows.map(election => ({ ...election, partyCount: election.candidateCount }));
 }
 
@@ -30,18 +30,23 @@ async function remove(id, actor) {
     const [election] = await query("SELECT ends_at AS endsAt FROM elections WHERE id = ? FOR UPDATE", [id]);
     if (!election) throw new ElectionError(404, "Election not found");
     const [clock] = await query("SELECT UTC_TIMESTAMP(3) AS now");
-    if (election.endsAt > clock.now) throw new ElectionError(409, "Only ended elections can be removed");
-    const result = await query("INSERT IGNORE INTO removed_elections (election_id, removed_by) VALUES (?, ?)", [id, actor.id]);
-    if (!result.affectedRows) throw new ElectionError(409, "This election is already removed");
-    await Audit.record(query, actor, "election_removed", id, id);
-  });
-}
-async function restore(id, actor) {
-  await database.transaction(async query => {
-    await query("SELECT id FROM elections WHERE id = ? FOR UPDATE", [id]);
-    const result = await query("DELETE FROM removed_elections WHERE election_id = ?", [id]);
-    if (!result.affectedRows) throw new ElectionError(404, "Removed election not found");
-    await Audit.record(query, actor, "election_restored", id, id);
+    if (election.endsAt > clock.now) throw new ElectionError(409, "Only ended elections can be deleted");
+    // Match the election -> chain lock order used by voting. Never discard
+    // signed transactions awaiting recovery, or race the relayer's nonce read.
+    await query("SELECT id FROM chain_lock WHERE id = 1 FOR UPDATE");
+    const transactions = await query("SELECT job_key FROM chain_transactions WHERE election_id = ? AND status = 'pending' LIMIT 1", [id]);
+    const attempts = await query("SELECT transaction_hash FROM chain_attempts WHERE election_id = ? AND status = 'pending' LIMIT 1", [id]);
+    if (transactions.length || attempts.length) throw new ElectionError(409, "Ledger transactions are still pending. Refresh this election's results before deleting it.");
+    await query("DELETE FROM voting_credentials WHERE election_id = ?", [id]);
+    await query("DELETE FROM election_voters WHERE election_id = ?", [id]);
+    await query("DELETE FROM chain_attempts WHERE election_id = ?", [id]);
+    await query("DELETE FROM chain_transactions WHERE election_id = ?", [id]);
+    await query("DELETE FROM election_banners WHERE election_id = ?", [id]);
+    // Party details and ballot snapshots cascade from the ballot candidates.
+    await query("DELETE FROM candidates WHERE election_id = ?", [id]);
+    await query("DELETE FROM removed_elections WHERE election_id = ?", [id]);
+    await query("DELETE FROM elections WHERE id = ?", [id]);
+    await Audit.record(query, actor, "election_deleted", id, id);
   });
 }
 
@@ -147,4 +152,4 @@ async function banner(id, actor) {
   return rows[0].image_data;
 }
 
-module.exports = { ElectionError, list, detail, create, update, saveCandidate, removeCandidate, assignVoter, removeVoter, saveBanner, banner, remove, restore };
+module.exports = { ElectionError, list, detail, create, update, saveCandidate, removeCandidate, assignVoter, removeVoter, saveBanner, banner, remove };

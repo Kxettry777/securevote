@@ -10,7 +10,7 @@ SecureVote now supports the complete local voting workflow:
 - Confirmed party deletion that disables party login and preserves saved elections and results.
 - Party-owned candidate nominations, separate role hierarchies per party, and complete-roster submission.
 - Admin voter enrollment with unique institutional IDs, immediate approval or pending review, and expiring single-use activation links.
-- Removal/restoration of ended elections and confirmed deletion of individual or bulk audit entries.
+- Permanent deletion of ended elections and confirmed deletion of individual or bulk audit entries.
 - Election creation from 2 to 100 submitted party rosters, immutable ballot snapshots, and approved voter assignments.
 - Administrator banner uploads with preview, replacement, removal, and protected image access.
 - Server-aligned countdowns before and during voting on election cards, details, and ballots.
@@ -85,8 +85,8 @@ footer, and routine sign-out message removed. Activation instructions and actual
 authentication errors remain visible when needed.
 
 Place the shared profile image at `frontend/src/assets/profile.jpg`. It appears
-on the login card and in the signed-in account header, cropped to a circle. Until
-the file is present, the interface shows an SV placeholder. Rebuild the frontend
+on the login page, sidebar, and signed-in account header, cropped to a circle. Until
+the file is present, the interface shows a neutral profile icon. Rebuild the frontend
 after adding or replacing the image for a production deployment.
 
 Administrators land on **Dashboard** after login or session restoration. The
@@ -202,11 +202,13 @@ those services are not already running separately. Keep using the existing ledge
   account pending. This endpoint always creates a voter, regardless of submitted
   role fields. Activation, approval, and election assignment are required before
   voting.
-- In **Elections**, **Remove election** is available for ended elections. A
-  confirmation explains that it disappears from participant views. **Removed
-  elections** lets admins inspect and restore it. Upcoming/active elections cannot
-  be removed. This is reversible removal from the application, not erasure of
-  blockchain transactions; candidates, assignments, and results remain intact.
+- In **Elections**, **Delete election** is available for ended elections. Type
+  `DELETE` to permanently remove the election, ballot snapshots, voter assignments,
+  banner, credentials, and local transaction records. There is no removed-election
+  list or restore action. Upcoming/active elections cannot be deleted, and pending
+  ledger transactions must be reconciled first by refreshing results. Registered
+  parties, voter accounts, administrative audit events, and confirmed blockchain
+  transactions remain. Deleted elections and their results are unavailable in the app.
 - In **Audit log**, admins can delete a single entry or clear all history up to
   their most recent loaded snapshot. Both actions require typing `DELETE`.
   Deletion is permanent. New activity after the snapshot is retained, and clearing
@@ -214,11 +216,22 @@ those services are not already running separately. Keep using the existing ledge
 
 API additions: `POST /api/admin/voters` (`fullName`, `email`, `institutionalId`,
 `isApproved`), `POST /api/admin/voters/:id/activation` (replace an unused activation
-link), `DELETE /api/elections/:id`, `POST /api/elections/:id/restore`,
-`GET /api/elections?removed=true`, `DELETE /api/admin/audit/:id` (body
+link), `DELETE /api/elections/:id` (body `{ confirmation: "DELETE" }`),
+`DELETE /api/admin/audit/:id` (body
 `{ confirmation: "DELETE" }`), and `DELETE /api/admin/audit` (body
 `{ confirmation: "DELETE", throughId }`, using `latestId` from the audit list).
 All require an administrator account.
+
+For an existing installation with elections removed by the older version, run:
+
+```powershell
+node backend/scripts/purge-removed-elections.js --confirm=DELETE
+```
+
+This permanently deletes only previously removed elections, using the same
+transactional deletion and pending-ledger checks. It can be rerun safely. Normal
+database setup does not delete elections. The legacy marker table remains for
+upgrade compatibility; its entries stay hidden until cleanup is complete.
 
 Party deletion uses `DELETE /api/registry/parties/:id` with body
 `{ confirmation: "DELETE" }`. The additive `025_deleted_parties.sql` migration
@@ -385,12 +398,15 @@ replacement, and preservation of existing images. Browser visual/interaction
 verification still needs the manual demo above because no browser automation
 surface was connected during verification.
 
-Latest verification (2026-09-17): all 51 backend test cases passed (18 unit/HTTP/
-contract cases and 33 MySQL/HTTP/ledger integration cases). The full
-`npm.cmd run check` command passed, including ESLint with zero warnings. The JavaScript/JSX
+Latest verification (2026-09-17): all 55 backend test cases passed (18 unit/HTTP/
+contract cases and 37 MySQL/HTTP/ledger integration cases). All checks used by
+`npm.cmd run check` passed, including ESLint with zero warnings. The JavaScript/JSX
 production frontend build passed. The added checks cover dashboard authorization
 and counts, deletion confirmation, rollback when auditing fails, disabled party
 sessions, and preservation of election snapshots and confirmed blockchain results.
+Permanent election deletion checks also cover pending-transaction protection,
+atomic rollback, dependent-row cleanup, all-role access removal, dashboard counts,
+repeatable legacy cleanup, and unchanged confirmed blockchain transactions.
 All 12 catalog symbols have unique IDs and
 valid WebP images. The running application database includes the enrollment
 migration, and the running API returns 403 for public registration.
@@ -400,6 +416,9 @@ replace the browser visual/interaction checks described above.
 The running API also passed an administrator login and dashboard request after
 the party-deletion migration was applied. The profile photograph is supplied by
 the site owner and was not present during these checks.
+The two previously removed local elections have been permanently deleted and
+verified absent. The running API rejects the retired removed-election filter,
+and Vite serves the updated profile placeholder.
 The frontend now uses ESLint 10 instead of the native Oxlint binary that Windows
 Application Control blocked. No Windows security settings were changed. The
 TypeScript compiler, TypeScript configuration files, and direct type-package

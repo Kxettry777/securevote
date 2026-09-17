@@ -97,7 +97,7 @@ function ElectionView({ id, token, admin, voter, onSessionEnd, back, onChange, n
     <div className="section-heading"><button className="text-button" disabled={busy} onClick={back}>← All elections</button><button className="secondary-button" disabled={busy || loading} onClick={() => { setLoading(true); setRevision(value => value + 1); }}>Refresh</button></div>
     {error && <p className="notice error" role="alert">{error}</p>}{message && <p className="notice success" role="status">{message}</p>}
     {loading ? <p className="empty-state" role="status">Loading election...</p> : data && <>
-      <section className="panel election-summary">{data.election.removedAt && <p className="notice">This election has been removed from participant views. Restore it from Removed elections to make it visible again.</p>}<ElectionBanner election={data.election} token={token}/><div className="election-summary-heading"><div><span className={`status-badge ${status}`}>{status}</span><h2>{data.election.title}</h2></div><ElectionCountdown election={data.election} now={now}/></div><p className="preserve-lines">{data.election.description || "No description provided."}</p><div className="schedule-line"><span><strong>Starts</strong> {dateLabel(data.election.startsAt)}</span><span><strong>Ends</strong> {dateLabel(data.election.endsAt)}</span></div><p className="muted">Times shown in {zone}.</p>
+      <section className="panel election-summary"><ElectionBanner election={data.election} token={token}/><div className="election-summary-heading"><div><span className={`status-badge ${status}`}>{status}</span><h2>{data.election.title}</h2></div><ElectionCountdown election={data.election} now={now}/></div><p className="preserve-lines">{data.election.description || "No description provided."}</p><div className="schedule-line"><span><strong>Starts</strong> {dateLabel(data.election.startsAt)}</span><span><strong>Ends</strong> {dateLabel(data.election.endsAt)}</span></div><p className="muted">Times shown in {zone}.</p>
         {admin ? <p className="notice">{editable ? "Party rosters are saved for this election. Assign approved voters and check the schedule before voting starts." : "This election has started. Election details, parties, and assignments are locked."}</p> : <p className="notice">{voter ? status === "upcoming" ? "You are assigned to this election. Voting opens at the scheduled start time." : status === "active" ? "Voting is open. Review the parties and cast your ballot below." : "Voting has ended. View the confirmed results below." : "You can review election details and view results after voting ends."}</p>}
       </section>
       {editable && <details className="panel"><summary>Edit election details</summary><ScheduleForm key={`${data.election.title}:${data.election.description}:${data.election.startsAt}:${data.election.endsAt}`} election={data.election} busy={busy} save={body => mutate(`/elections/${id}`, "PATCH", body, "Election details saved.")}/></details>}
@@ -124,7 +124,6 @@ function ElectionView({ id, token, admin, voter, onSessionEnd, back, onChange, n
 }
 export function Elections(props) {
     const { token, admin, voter, onSessionEnd } = props;
-    const [showRemoved, setShowRemoved] = useState(false);
     const [removing, setRemoving] = useState(null);
     const [message, setMessage] = useState("");
     const [elections, setElections] = useState([]);
@@ -153,7 +152,7 @@ export function Elections(props) {
     }, []);
     useEffect(() => {
         let active = true;
-        Promise.all([api(showRemoved ? "/elections?removed=true" : "/elections", {}, token), admin ? api("/registry", {}, token) : Promise.resolve(null)]).then(([result, registry]) => { if (active && registry)
+        Promise.all([api("/elections", {}, token), admin ? api("/registry", {}, token) : Promise.resolve(null)]).then(([result, registry]) => { if (active && registry)
             setRegisteredParties(registry.parties); if (active) {
             if (result.elections[0])
                 syncClock(result.elections[0].serverTime);
@@ -170,16 +169,16 @@ export function Elections(props) {
         }).finally(() => { if (active)
             setLoading(false); });
         return () => { active = false; };
-    }, [token, revision, onSessionEnd, syncClock, admin, showRemoved]);
-    async function changeRemoval(election, restore = false) {
+    }, [token, revision, onSessionEnd, syncClock, admin]);
+    async function deleteElection(election) {
         setBusy(true);
         setError("");
         setMessage("");
         try {
-            await api(`/elections/${election.id}${restore ? "/restore" : ""}`, { method: restore ? "POST" : "DELETE" }, token);
+            await api(`/elections/${election.id}`, { method: "DELETE", body: JSON.stringify({ confirmation: "DELETE" }) }, token);
             setRemoving(null);
             setElections(current => current.filter(item => item.id !== election.id));
-            setMessage(restore ? "Election restored." : "Election removed. You can restore it from Removed elections.");
+            setMessage("Election permanently deleted.");
         }
         catch (err) {
             if (err instanceof ApiError && (err.status === 401 || err.status === 403))
@@ -194,15 +193,8 @@ export function Elections(props) {
     if (selected)
         return <ElectionView key={selected} {...props} id={selected} now={now} syncClock={syncClock} back={() => { setSelected(""); setRevision(value => value + 1); }} onChange={() => setRevision(value => value + 1)}/>;
     return <div className="election-workspace">
-    {removing && <ConfirmDialog title="Remove previous election?" busy={busy} action="Remove election" onCancel={() => { setRemoving(null); setError(""); }} onConfirm={() => { void changeRemoval(removing); }}><p>Remove <strong>{removing.title}</strong> from the election list? It will no longer be visible to voters or parties.</p><p>You can restore it from Removed elections. Recorded votes and results are retained.</p>{error && <p className="notice error" role="alert">{error}</p>}</ConfirmDialog>}
+    {removing && <ConfirmDialog title="Permanently delete election?" busy={busy} permanent action="Delete election" onCancel={() => { setRemoving(null); setError(""); }} onConfirm={() => { void deleteElection(removing); }}><p>Permanently delete <strong>{removing.title}</strong> and its saved ballot, voter assignments, banner, and local voting records? This cannot be undone.</p><p>Confirmed blockchain transactions and the administrative audit log remain.</p>{error && <p className="notice error" role="alert">{error}</p>}</ConfirmDialog>}
     {message && <p className="notice success" role="status">{message}</p>}
-    {admin && !creating && <div className="button-row" role="group" aria-label="Election visibility"><button className={showRemoved ? "secondary-button" : "primary-button"} aria-pressed={!showRemoved} disabled={busy || loading} onClick={() => { if (showRemoved) {
-        setLoading(true);
-        setShowRemoved(false);
-    } }}>Current elections</button><button className={showRemoved ? "primary-button" : "secondary-button"} aria-pressed={showRemoved} disabled={busy || loading} onClick={() => { if (!showRemoved) {
-        setLoading(true);
-        setShowRemoved(true);
-    } }}>Removed elections</button></div>}
     <section className="panel"><div className="section-heading"><h2>{creating ? "Prepare an election" : voter ? "Assigned elections" : "Elections"}</h2><div className="button-row"><button className="secondary-button" disabled={loading || busy} onClick={() => { setLoading(true); setRevision(value => value + 1); }}>Refresh</button>{admin && <button className="primary-button" disabled={busy} onClick={() => { if (props.onCreate && !creating)
         props.onCreate();
     else if (creating && props.onList)
@@ -240,9 +232,9 @@ export function Elections(props) {
             <h3>{election.title}</h3><p className="election-excerpt">{election.description || "Choose the political party that represents your priorities."}</p>
             <p className="muted">{dateLabel(election.startsAt)} to {dateLabel(election.endsAt)}</p><ElectionCountdown election={election} now={now} compact/>
             <button className="secondary-button" disabled={busy} onClick={() => setSelected(election.id)} aria-label={`${admin ? "Manage" : "View"} ${election.title}`}>{admin ? "Manage election" : status === "ended" ? "View results" : status === "active" && voter ? "View parties and vote" : "View political parties"}</button>
-            {admin && (election.removedAt ? <button className="secondary-button" disabled={busy} onClick={() => { void changeRemoval(election, true); }}>Restore election</button> : status === "ended" && <button className="text-button danger" disabled={busy} onClick={() => { setError(""); setRemoving(election); }}>Remove election</button>)}
+            {admin && status === "ended" && <button className="text-button danger" disabled={busy} onClick={() => { setError(""); setRemoving(election); }}>Delete election</button>}
           </div></article>;
-            })}</div> : !error && <div className="empty-state"><h3>{showRemoved ? "No removed elections" : admin ? "Create your first election" : voter ? "No elections assigned yet" : "No elections yet"}</h3><p>{showRemoved ? "Ended elections you remove will appear here for restoration." : admin ? "Register parties, wait for their candidate rosters, then create the election." : voter ? "An administrator will assign you to elections you can participate in." : "Elections will appear here when an administrator creates them."}</p></div>}
+            })}</div> : !error && <div className="empty-state"><h3>{admin ? "Create your first election" : voter ? "No elections assigned yet" : "No elections yet"}</h3><p>{admin ? "Register parties, wait for their candidate rosters, then create the election." : voter ? "An administrator will assign you to elections you can participate in." : "Elections will appear here when an administrator creates them."}</p></div>}
     </section>
   </div>;
 }
