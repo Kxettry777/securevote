@@ -6,6 +6,7 @@ const database = require("../database");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const Enrollment = require("../models/Enrollment");
 const app = require("../app");
 
 // Exercise the real HTTP routes, password hashing, and JWT middleware with an
@@ -48,25 +49,15 @@ test("registration, approval, and session authorization", async (t) => {
     return { status: response.status, data: await response.json() };
   }
   let voterId, adminToken, voterToken;
-  await t.test("invalid registration input returns 400", async () => {
-    for (const body of [undefined, {}, { fullName: {}, email: 123, password: [] }, { fullName: "  ", email: "voter@example.com", password: "password123" }, { fullName: "Voter", email: "invalid", password: "password123" }, { fullName: "Voter", email: "voter@example.com", password: "short" }, { fullName: "Voter", email: "voter@example.com", password: "😀".repeat(20) }]) {
-      assert.equal((await request("/auth/register", "POST", body)).status, 400);
+  await t.test("public registration is disabled and cannot create accounts", async () => {
+    const before = users.size;
+    for (const body of [undefined, {}, { fullName: "Test Voter", email: "voter@example.com", password: "voter-password", role: "admin", isApproved: true }]) {
+      assert.equal((await request("/auth/register", "POST", body)).status, 403);
     }
+    assert.equal(users.size, before);
   });
-  await t.test("registration normalizes email and cannot self-approve or select admin role", async () => {
-    const result = await request("/auth/register", "POST", { fullName: "Test Voter", email: " VOTER@example.com ", password: "voter-password", role: "admin", isApproved: true });
-    assert.equal(result.status, 201);
-    assert.equal(result.data.user.role, "voter");
-    assert.equal(result.data.user.isApproved, false);
-    assert.equal(result.data.user.email, "voter@example.com");
-    assert.equal(result.data.user.passwordHash, undefined);
-    voterId = result.data.user.id;
-    assert.notEqual(users.get(voterId).passwordHash, "voter-password");
-    assert.equal(await bcrypt.compare("voter-password", users.get(voterId).passwordHash), true);
-  });
-  await t.test("duplicate registration returns 409", async () => {
-    assert.equal((await request("/auth/register", "POST", { fullName: "Duplicate", email: "VOTER@example.com", password: "password123" })).status, 409);
-  });
+  // Existing accounts retain their passwords and approval behavior.
+  voterId = (await User.create({ fullName: "Test Voter", email: "voter@example.com", passwordHash: await bcrypt.hash("voter-password", 4) })).id;
   await t.test("pending voter cannot sign in", async () => {
     assert.equal((await request("/auth/login", "POST", { email: "voter@example.com", password: "voter-password" })).status, 403);
   });
@@ -87,6 +78,24 @@ test("registration, approval, and session authorization", async (t) => {
     assert.equal((await request("/admin/voters")).status, 401);
     assert.equal((await request("/admin/voters", "GET", undefined, "invalid")).status, 401);
   });
+  await t.test("enrollment rejects missing identity and admin-selected passwords", async () => {
+    const body = { fullName: "New Voter", email: "new@example.com", institutionalId: "STU-001", isApproved: true };
+    for (const invalid of [{ ...body, fullName: " " }, { ...body, email: "invalid" }, { ...body, institutionalId: undefined }, { ...body, institutionalId: "bad id" }, { ...body, isApproved: "true" }, { ...body, password: "password123" }]) {
+      assert.equal((await request("/admin/voters", "POST", invalid, adminToken)).status, 400);
+    }
+    assert.equal((await request("/admin/voters", "POST", body)).status, 401);
+    assert.equal((await request(`/admin/voters/${voterId}/activation`, "POST")).status, 401);
+  });
+  await t.test("activation validates its token and password before using the repository", async () => {
+    const activate = t.mock.method(Enrollment, "activate", async () => null);
+    for (const body of [undefined, {}, { token: "bad", password: "password123" }, { token: "a".repeat(64), password: "short" }, { token: "a".repeat(64), password: "\u{1F600}".repeat(20) }]) {
+      assert.equal((await request("/auth/activate", "POST", body)).status, 400);
+    }
+    assert.equal(activate.mock.callCount(), 0);
+    assert.equal((await request("/auth/activate", "POST", { token: "a".repeat(64), password: "password123" })).status, 400);
+    assert.equal(activate.mock.callCount(), 1);
+    activate.mock.restore();
+  });
   await t.test("approval validates ID and boolean; cannot approve an admin", async () => {
     assert.equal((await request("/admin/voters/invalid/approval", "PATCH", { isApproved: true }, adminToken)).status, 400);
     assert.equal((await request(`/admin/voters/${voterId}/approval`, "PATCH", { isApproved: "true" }, adminToken)).status, 400);
@@ -106,6 +115,8 @@ test("registration, approval, and session authorization", async (t) => {
   });
   await t.test("voter cannot list voters or change approval", async () => {
     assert.equal((await request("/admin/voters", "GET", undefined, voterToken)).status, 403);
+    assert.equal((await request("/admin/voters", "POST", {}, voterToken)).status, 403);
+    assert.equal((await request(`/admin/voters/${voterId}/activation`, "POST", undefined, voterToken)).status, 403);
     assert.equal((await request(`/admin/voters/${voterId}/approval`, "PATCH", { isApproved: true }, voterToken)).status, 403);
   });
   await t.test("revocation blocks an already-issued voter token", async () => {

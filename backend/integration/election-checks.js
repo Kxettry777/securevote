@@ -7,7 +7,33 @@ module.exports = async function electionChecks(t, request, { token, voterId, vot
   const { parties, roles, symbolImage } = await require("./registry-fixtures")(request, token);
   const [first, second] = parties;
   const schedule = { title: "Student council", description: "Choose your representatives.", startsAt: new Date(Date.now() + 3600000).toISOString(), endsAt: new Date(Date.now() + 7200000).toISOString(), partyIds: parties.map(p => p.id) };
+  await require("./election-deletion-checks")(t, request, { token, voterId, voterToken, adminId, partyToken: first.token, schedule, symbolImage });
   let electionId, otherId;
+  await t.test("symbol selection saves a matching name and image and rejects unknown choices", async () => {
+    assert.equal((await request("/registry/symbols")).status, 401);
+    assert.equal((await request("/registry/symbols", "GET", undefined, voterToken)).status, 403);
+    const catalog = await request("/registry/symbols", "GET", undefined, token);
+    assert.equal(catalog.status, 200);
+    const bell = catalog.data.symbols.find(symbol => symbol.id === "bell");
+    assert.ok(bell);
+    assert.match(bell.image, /^data:image\/webp;base64,/);
+    const body = { name: "Symbol selection party", shortName: "SSP", email: "symbol-choice@example.com", password: "symbol-party-password", symbolId: bell.id, symbol: "Wrong name", symbolImage: "invalid" };
+    assert.equal((await request("/registry/parties", "POST", { ...body, symbolId: "unknown" }, token)).status, 400);
+    const created = await request("/registry/parties", "POST", body, token);
+    assert.equal(created.status, 201);
+    const readParty = async () => (await request("/registry", "GET", undefined, token)).data.parties.find(party => party.id === created.data.id);
+    let saved = await readParty();
+    assert.equal(saved.symbol, bell.name);
+    assert.equal(saved.symbolImage, bell.image);
+    // Keeping a previously saved symbol does not overwrite its image.
+    assert.equal((await request(`/registry/parties/${saved.id}`, "PATCH", { name: saved.name, shortName: saved.shortName, symbol: saved.symbol }, token)).status, 200);
+    assert.equal((await readParty()).symbolImage, bell.image);
+    const sun = catalog.data.symbols.find(symbol => symbol.id === "sun");
+    assert.equal((await request(`/registry/parties/${saved.id}`, "PATCH", { name: saved.name, symbolId: sun.id }, token)).status, 200);
+    saved = await readParty();
+    assert.equal(saved.symbol, sun.name);
+    assert.equal(saved.symbolImage, sun.image);
+  });
   await t.test("party registration is admin-only, atomic, and excludes credentials", async () => {
     assert.equal((await request("/registry")).status, 401);
     assert.equal((await request("/registry", "GET", undefined, voterToken)).status, 403);
@@ -27,7 +53,8 @@ module.exports = async function electionChecks(t, request, { token, voterId, vot
     assert.ok(!JSON.stringify(own).includes("password"));
     assert.match(own.parties[0].symbolImage, /^data:image\/webp;base64,/);
     const selfRegistration = await request("/auth/register", "POST", { fullName: "Impersonator", email: "fake-party@example.com", password: "password-test", role: "party" });
-    assert.equal(selfRegistration.data.user.role, "voter");
+    assert.equal(selfRegistration.status, 403);
+    assert.equal(await User.findByEmail("fake-party@example.com"), null);
   });
   await t.test("parties nominate only their own candidates and submit complete rosters", async () => {
     const candidate = first.candidates[0];
@@ -143,49 +170,26 @@ module.exports = async function electionChecks(t, request, { token, voterId, vot
     await assert.rejects(database.execute("UPDATE party_candidates SET role_id = ? WHERE id = ?", [second.roles[0].id, first.candidates[0].id]), { code: "ER_NO_REFERENCED_ROW_2" });
   });
   await t.test("admin voter registration validates input, approval, and privileges", async () => {
-    const body = { fullName: "Admin Added Voter", email: " added@example.com ", password: "added-voter-password", isApproved: true, role: "admin" };
+    const body = { fullName: "Admin Added Voter", email: " added@example.com ", institutionalId: "ADDED-001", isApproved: true, role: "admin" };
     for (const unauthorized of [voterToken, first.token]) assert.equal((await request("/admin/voters", "POST", body, unauthorized)).status, 403);
     assert.equal((await request("/admin/voters", "POST", body)).status, 401);
-    for (const invalid of [{ ...body, fullName: " " }, { ...body, email: "invalid" }, { ...body, password: "short" }, { ...body, isApproved: "true" }]) assert.equal((await request("/admin/voters", "POST", invalid, token)).status, 400);
+    for (const invalid of [{ ...body, fullName: " " }, { ...body, email: "invalid" }, { ...body, institutionalId: " " }, { ...body, isApproved: "true" }]) assert.equal((await request("/admin/voters", "POST", invalid, token)).status, 400);
     const result = await request("/admin/voters", "POST", body, token);
     assert.equal(result.status, 201);
     assert.equal(result.data.voter.role, "voter");
     assert.equal(result.data.voter.email, "added@example.com");
     assert.equal(result.data.voter.passwordHash, undefined);
-    assert.equal((await request("/auth/login", "POST", { email: body.email, password: body.password })).status, 200);
+    assert.equal((await request("/auth/activate", "POST", { token: result.data.activation.token, password: "added-voter-password" })).status, 200);
+    assert.equal((await request("/auth/login", "POST", { email: body.email, password: "added-voter-password" })).status, 200);
     assert.equal((await request("/admin/voters", "POST", body, token)).status, 409);
-    const pending = { ...body, email: "added-pending@example.com", isApproved: false };
-    assert.equal((await request("/admin/voters", "POST", pending, token)).status, 201);
-    assert.equal((await request("/auth/login", "POST", { email: pending.email, password: pending.password })).status, 403);
+    const pending = { ...body, email: "added-pending@example.com", institutionalId: "ADDED-002", isApproved: false };
+    const pendingResult = await request("/admin/voters", "POST", pending, token);
+    assert.equal(pendingResult.status, 201);
+    assert.equal((await request("/auth/activate", "POST", { token: pendingResult.data.activation.token, password: "pending-password" })).status, 200);
+    assert.equal((await request("/auth/login", "POST", { email: pending.email, password: "pending-password" })).status, 403);
     assert.equal((await request(`/elections/${otherId}/voters`, "POST", { voterId: result.data.voter.id }, token)).status, 201);
   });
-  await t.test("only admins can remove ended elections and restore participant access", async () => {
-    const path = `/elections/${electionId}`;
-    for (const unauthorized of [voterToken, first.token]) {
-      assert.equal((await request(path, "DELETE", undefined, unauthorized)).status, 403);
-      assert.equal((await request(`${path}/restore`, "POST", undefined, unauthorized)).status, 403);
-      assert.equal((await request("/elections?removed=true", "GET", undefined, unauthorized)).status, 403);
-    }
-    assert.equal((await request(path, "DELETE", undefined, token)).status, 409);
-    assert.equal((await request(`/elections/${otherId}`, "DELETE", undefined, token)).status, 409);
-    await database.execute("UPDATE elections SET ends_at = UTC_TIMESTAMP(3) - INTERVAL 1 SECOND, starts_at = UTC_TIMESTAMP(3) - INTERVAL 2 HOUR WHERE id = ?", [electionId]);
-    const before = (await request(path, "GET", undefined, token)).data;
-    assert.equal((await request(path, "DELETE", undefined, token)).status, 200);
-    assert.equal((await request(path, "DELETE", undefined, token)).status, 409);
-    assert.ok(!(await request("/elections", "GET", undefined, token)).data.elections.some(e => e.id === electionId));
-    assert.equal((await request("/elections?removed=true", "GET", undefined, token)).data.elections[0].id, electionId);
-    for (const unauthorized of [voterToken, first.token]) {
-      assert.equal((await request(path, "GET", undefined, unauthorized)).status, 404);
-      assert.equal((await request(`${path}/results`, "GET", undefined, unauthorized)).status, 404);
-      assert.ok(!(await request("/elections", "GET", undefined, unauthorized)).data.elections.some(e => e.id === electionId));
-    }
-    const after = (await request(path, "GET", undefined, token)).data;
-    assert.deepEqual(after.parties, before.parties);
-    assert.deepEqual(after.voters, before.voters);
-    assert.equal((await request(`${path}/restore`, "POST", undefined, token)).status, 200);
-    assert.equal((await request(path, "GET", undefined, voterToken)).status, 200);
-    assert.equal((await request(`${path}/restore`, "POST", undefined, token)).status, 404);
-  });
+  await database.execute("UPDATE elections SET ends_at = UTC_TIMESTAMP(3) - INTERVAL 1 SECOND, starts_at = UTC_TIMESTAMP(3) - INTERVAL 2 HOUR WHERE id = ?", [electionId]);
   await t.test("audit deletion needs admin confirmation and preserves newer events and elections", async () => {
     const page = (await request("/admin/audit", "GET", undefined, token)).data;
     const entry = page.entries[0];
@@ -209,5 +213,6 @@ module.exports = async function electionChecks(t, request, { token, voterId, vot
     assert.equal((await request("/admin/audit", "GET", undefined, token)).data.entries.length, 0);
   });
 
+  await require("./admin-overview-checks")(t, request, { token, voterToken, first, second, electionId, otherId, schedule });
 };
 

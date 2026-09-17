@@ -4,8 +4,17 @@ const Audit = require("./Audit");
 const { ElectionError } = require("./Election");
 
 const imageUrl = buffer => `data:image/webp;base64,${buffer.toString("base64")}`;
+async function lockActiveParty(query, id, status = 404) {
+  const [party] = await query("SELECT * FROM registered_parties WHERE id = ? FOR UPDATE", [id]);
+  // Use a current read after acquiring the party lock, including when a roster
+  // request began before the administrator deleted the registration.
+  const [deleted] = await query("SELECT party_id FROM deleted_parties WHERE party_id = ? FOR SHARE", [id]);
+  if (!party || deleted) throw new ElectionError(status, "Registered party not found");
+  return party;
+}
 async function ownedParty(actor, query = database.execute) {
-  const [row] = await query("SELECT party_id AS partyId FROM party_accounts WHERE user_id = ?", [actor.id]);
+  const [row] = await query(`SELECT a.party_id AS partyId FROM party_accounts a WHERE a.user_id = ?
+    AND NOT EXISTS (SELECT 1 FROM deleted_parties d WHERE d.party_id = a.party_id)`, [actor.id]);
   if (!row) throw new ElectionError(403, "Your account is not linked to a registered party");
   return row.partyId;
 }
@@ -14,19 +23,21 @@ async function list(actor) {
   const parties = await database.execute(`SELECT p.id, p.name, p.short_name AS shortName, p.symbol, p.symbol_image AS symbolImage, p.manifesto,
     u.email AS accountEmail, s.submitted_at AS submittedAt
     FROM registered_parties p LEFT JOIN party_accounts a ON a.party_id = p.id LEFT JOIN users u ON u.id = a.user_id
-    LEFT JOIN party_submissions s ON s.party_id = p.id ${partyId ? "WHERE p.id = ?" : ""} ORDER BY p.name, p.id`, partyId ? [partyId] : []);
-  const roles = await database.execute(`SELECT id, party_id AS partyId, name, rank_order AS \`rank\` FROM party_candidate_roles ${partyId ? "WHERE party_id = ?" : ""} ORDER BY rank_order, id`, partyId ? [partyId] : []);
+    LEFT JOIN party_submissions s ON s.party_id = p.id
+    WHERE NOT EXISTS (SELECT 1 FROM deleted_parties d WHERE d.party_id = p.id) ${partyId ? "AND p.id = ?" : ""} ORDER BY p.name, p.id`, partyId ? [partyId] : []);
+  const roles = await database.execute(`SELECT id, party_id AS partyId, name, rank_order AS \`rank\` FROM party_candidate_roles r
+    WHERE NOT EXISTS (SELECT 1 FROM deleted_parties d WHERE d.party_id = r.party_id) ${partyId ? "AND party_id = ?" : ""} ORDER BY rank_order, id`, partyId ? [partyId] : []);
   const candidates = await database.execute(`SELECT c.id, c.party_id AS partyId, c.role_id AS roleId, c.full_name AS fullName, c.biography,
     r.name AS roleName, r.rank_order AS \`rank\` FROM party_candidates c JOIN party_candidate_roles r ON r.id = c.role_id
-    ${partyId ? "WHERE c.party_id = ?" : ""} ORDER BY r.rank_order, c.full_name, c.id`, partyId ? [partyId] : []);
+    WHERE NOT EXISTS (SELECT 1 FROM deleted_parties d WHERE d.party_id = c.party_id)
+    ${partyId ? "AND c.party_id = ?" : ""} ORDER BY r.rank_order, c.full_name, c.id`, partyId ? [partyId] : []);
   return { parties: parties.map(p => ({ ...p, symbolImage: imageUrl(p.symbolImage), candidates: candidates.filter(c => c.partyId === p.id), roles: roles.filter(r => r.partyId === p.id) })), roles, candidates };
 }
 async function saveParty(id, data, actor) {
   const target = id || randomUUID();
   await database.transaction(async query => {
     if (id) {
-      const [party] = await query("SELECT id FROM registered_parties WHERE id = ? FOR UPDATE", [id]);
-      if (!party) throw new ElectionError(404, "Registered party not found");
+      await lockActiveParty(query, id);
       await query(`UPDATE registered_parties SET name = ?, short_name = ?, symbol = ?, manifesto = ?${data.symbolImage ? ", symbol_image = ?" : ""} WHERE id = ?`,
         [data.name, data.shortName, data.symbol, data.manifesto, ...(data.symbolImage ? [data.symbolImage] : []), id]);
     } else {
@@ -47,8 +58,7 @@ async function saveParty(id, data, actor) {
 async function saveRole(id, data, actor) {
   const target = id || randomUUID();
   await database.transaction(async query => {
-    const [party] = await query("SELECT id FROM registered_parties WHERE id = ? FOR UPDATE", [data.partyId]);
-    if (!party) throw new ElectionError(404, "Registered party not found");
+    await lockActiveParty(query, data.partyId);
     if (id) {
       const result = await query("UPDATE party_candidate_roles SET name = ?, rank_order = ? WHERE id = ? AND party_id = ?", [data.name, data.rank, id, data.partyId]);
       if (!result.affectedRows) throw new ElectionError(404, "Role not found");
@@ -64,8 +74,7 @@ async function saveCandidate(id, data, actor) {
     const partyId = await ownedParty(actor, query);
     if (partyId !== data.partyId) throw new ElectionError(403, "You can nominate candidates only for your own party");
     // Serialize roster edits with election snapshots using the party lock.
-    const [party] = await query("SELECT id FROM registered_parties WHERE id = ? FOR UPDATE", [data.partyId]);
-    if (!party) throw new ElectionError(400, "Choose a registered party");
+    await lockActiveParty(query, data.partyId, 400);
     const [role] = await query("SELECT id FROM party_candidate_roles WHERE id = ? AND party_id = ? FOR SHARE", [data.roleId, data.partyId]);
     if (!role) throw new ElectionError(400, "Choose a candidate role");
     if (id) {
@@ -82,7 +91,7 @@ async function removeCandidate(id, actor) {
     const partyId = await ownedParty(actor, query);
     const [candidate] = await query("SELECT party_id FROM party_candidates WHERE id = ?", [id]);
     if (!candidate || candidate.party_id !== partyId) throw new ElectionError(404, "Candidate not found in your party");
-    await query("SELECT id FROM registered_parties WHERE id = ? FOR UPDATE", [candidate.party_id]);
+    await lockActiveParty(query, candidate.party_id);
     const result = await query("DELETE FROM party_candidates WHERE id = ?", [id]);
     if (!result.affectedRows) throw new ElectionError(404, "Candidate not found");
     await query("DELETE FROM party_submissions WHERE party_id = ?", [partyId]);
@@ -92,8 +101,7 @@ async function removeCandidate(id, actor) {
 async function snapshot(query, electionId, partyIds) {
   // Stable lock order also supports concurrent election preparation.
   for (const partyId of [...partyIds].sort()) {
-    const [party] = await query("SELECT * FROM registered_parties WHERE id = ? FOR UPDATE", [partyId]);
-    if (!party) throw new ElectionError(400, "One of the selected parties is not registered");
+    const party = await lockActiveParty(query, partyId, 400);
     const roles = await query("SELECT id FROM party_candidate_roles WHERE party_id = ? ORDER BY id FOR SHARE", [partyId]);
     const [submission] = await query("SELECT party_id FROM party_submissions WHERE party_id = ? FOR SHARE", [partyId]);
     if (!submission) throw new ElectionError(409, `${party.name} must submit its candidate roster before election creation`);
@@ -109,7 +117,7 @@ async function snapshot(query, electionId, partyIds) {
 async function submit(actor) {
   const partyId = await ownedParty(actor);
   await database.transaction(async query => {
-    await query("SELECT id FROM registered_parties WHERE id = ? FOR UPDATE", [partyId]);
+    await lockActiveParty(query, partyId);
     const roles = await query("SELECT id FROM party_candidate_roles WHERE party_id = ? ORDER BY id FOR SHARE", [partyId]);
     const candidates = await query("SELECT id FROM party_candidates WHERE party_id = ? FOR SHARE", [partyId]);
     if (!roles.length || candidates.length !== roles.length) throw new ElectionError(409, "Nominate one candidate for every role before submitting your roster");
@@ -117,4 +125,14 @@ async function submit(actor) {
     await Audit.record(query, actor, "party_roster_submitted", partyId);
   });
 }
-module.exports = { list, saveParty, saveRole, saveCandidate, removeCandidate, submit, snapshot, imageUrl };
+async function removeParty(id, actor) {
+  await database.transaction(async query => {
+    await lockActiveParty(query, id);
+    // Keep registry identities referenced by immutable election snapshots and audits.
+    await query("INSERT INTO deleted_parties (party_id, deleted_by) VALUES (?, ?)", [id, actor.id]);
+    await query("DELETE FROM party_submissions WHERE party_id = ?", [id]);
+    await Audit.record(query, actor, "party_registration_deleted", id);
+  });
+}
+
+module.exports = { list, saveParty, saveRole, saveCandidate, removeCandidate, removeParty, submit, snapshot, imageUrl };

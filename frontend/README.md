@@ -1,35 +1,37 @@
-# React + TypeScript + Vite
+# SecureVote frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The frontend uses React, JavaScript, JSX, and Vite. React components live in
+`src/*.jsx`; shared utilities and the Vite configuration use `.js`. No TypeScript
+source or TypeScript compilation step is required. `jsconfig.json` provides editor
+navigation and JSX support.
 
-Currently, two official plugins are available:
+From the repository root:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
-
-Note: This will impact Vite dev & build performances.
-You can also try [the experimental native React Compiler support in plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md#rust-react-compiler) by using `compiler: true` in the plugin options instead of using the Babel plugin.
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```powershell
+npm.cmd --prefix frontend install
+npm.cmd --prefix frontend run dev
+npm.cmd --prefix frontend run lint
+npm.cmd --prefix frontend run build
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+The frontend forwards `/api` requests to `http://127.0.0.1:5000`. Set
+`API_PROXY_TARGET` when the backend uses another address. Use `npm.cmd run dev`
+from the repository root to start the database setup, local ledger, backend, and
+frontend together.
+
+ESLint checks JavaScript and JSX, including React hooks, undefined variables,
+unused imports, and Fast Refresh exports. It uses JavaScript tooling instead of
+the previous native Oxlint binary, which Windows Application Control blocked.
+The React Compiler remains enabled in Vite.
+
+The current workflow includes an admin dashboard and voter list, commission
+enrollment, voter account activation, approval, party registration and deletion,
+symbol selection, nominations, elections, blockchain voting, and results.
+AI facial liveness is deferred.
+
+Add `src/assets/profile.jpg` to show the shared profile photograph on the
+**Secure Vote** login page, sidebar, and signed-in account header. A profile icon is displayed
+until it is added. Rebuild for production after adding or replacing the image.
+
+See [DEVELOPMENT.md](../DEVELOPMENT.md) for setup, verification results, and the
+complete demonstration.

@@ -51,11 +51,21 @@ test("MySQL schema, persistence, and full authentication workflow", async t => {
     });
     return { status: response.status, headers: response.headers, data: response.headers.get("content-type")?.startsWith("image/") ? Buffer.from(await response.arrayBuffer()) : await response.json() };
   }
-  const registration = { fullName: "MySQL Voter", email: " VOTER@example.com ", password: "voter-password", role: "admin", isApproved: true };
-  // Two simultaneous registrations must produce only one account.
-  const results = await Promise.all([request("/auth/register", "POST", registration), request("/auth/register", "POST", registration)]);
+  const login = await request("/auth/login", "POST", { email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD });
+  assert.equal(login.status, 200);
+  const token = login.data.token;
+  const registration = { fullName: "MySQL Voter", email: " VOTER@example.com ", institutionalId: " stu-001 ", role: "admin", isApproved: false };
+  assert.equal((await request("/auth/register", "POST", registration)).status, 403);
+  assert.equal((await request("/auth/register", "POST", registration, token)).status, 403);
+  // Concurrent commission enrollments must produce only one identity and invitation.
+  const results = await Promise.all([request("/admin/voters", "POST", registration, token), request("/admin/voters", "POST", registration, token)]);
   assert.deepEqual(results.map(result => result.status).sort(), [201, 409]);
-  const voter = results.find(result => result.status === 201).data.user;
+  const enrolled = results.find(result => result.status === 201).data;
+  const voter = enrolled.voter;
+  assert.equal(voter.institutionalId, "STU-001");
+  assert.equal(voter.activationPending, true);
+  assert.equal((await request("/auth/activate", "POST", { token: enrolled.activation.token, password: "voter-password" })).status, 200);
+  assert.equal((await User.findById(voter.id)).activationPending, false);
   assert.equal(voter.email, "voter@example.com");
   assert.equal(voter.role, "voter");
   assert.equal(voter.isApproved, false);
@@ -68,9 +78,6 @@ test("MySQL schema, persistence, and full authentication workflow", async t => {
   await assert.rejects(User.create({ fullName: "Duplicate", email: "VOTER@example.com", passwordHash: stored.passwordHash }), { code: "ER_DUP_ENTRY" });
   assert.equal(await User.findByEmail("' OR 1=1 -- "), null);
   assert.equal((await request("/auth/login", "POST", { email: voter.email, password: "voter-password" })).status, 403);
-  const login = await request("/auth/login", "POST", { email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD });
-  assert.equal(login.status, 200);
-  const token = login.data.token;
   const list = await request("/admin/voters", "GET", undefined, token);
   assert.equal(list.status, 200);
   assert.equal(list.data.voters.length, 1);
@@ -91,6 +98,7 @@ test("MySQL schema, persistence, and full authentication workflow", async t => {
   assert.equal(profile.status, 200);
   assert.equal(profile.data.user.passwordHash, undefined);
   assert.equal((await request("/admin/voters", "GET", undefined, voterLogin.data.token)).status, 403);
+  await require("./enrollment-checks")(t, request, { token, voterToken: voterLogin.data.token });
   await require("./election-checks")(t, request, { token, voterId: voter.id, voterToken: voterLogin.data.token, adminId: login.data.user.id });
   assert.equal((await request(`/admin/voters/${voter.id}/approval`, "PATCH", { isApproved: false }, token)).status, 200);
   assert.equal((await request("/auth/me", "GET", undefined, voterLogin.data.token)).status, 403);

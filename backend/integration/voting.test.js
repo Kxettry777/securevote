@@ -203,23 +203,36 @@ test("complete voting workflow with real MySQL, HTTP, and Ethereum receipts", { 
     const status = await request(`${base}/ballot`, "GET", undefined, voter.token);
     assert.equal(status.data.transactionHash, firstReceipt.transactionHash);
   });
-  await t.test("removing and restoring an ended election preserves confirmed blockchain results", async () => {
+  await t.test("deleting a registered party preserves confirmed votes and published results", async () => {
     const before = (await request(`${base}/results`, "GET", undefined, admin.token)).data;
-    assert.equal((await request(base, "DELETE", undefined, admin.token)).status, 200);
-    assert.equal((await request(`${base}/results`, "GET", undefined, voter.token)).status, 404);
-    const removed = await request(`${base}/results`, "GET", undefined, admin.token);
-    assert.equal(removed.status, 200);
-    assert.deepEqual(removed.data.parties, before.parties);
-    assert.equal(removed.data.totalVotes, before.totalVotes);
-    assert.equal(removed.data.status, "verified");
-    assert.equal((await request(`${base}/restore`, "POST", undefined, admin.token)).status, 200);
-    const restored = await request(`${base}/results`, "GET", undefined, voter.token);
-    assert.equal(restored.status, 200);
-    assert.equal(restored.data.totalVotes, before.totalVotes);
+    assert.equal((await request(`/registry/parties/${parties[0].id}`, "DELETE", { confirmation: "DELETE" }, admin.token)).status, 200);
+    const after = await request(`${base}/results`, "GET", undefined, voter.token);
+    assert.equal(after.status, 200);
+    assert.equal(after.data.status, "verified");
+    assert.equal(after.data.totalVotes, before.totalVotes);
+    assert.deepEqual(after.data.parties, before.parties);
+    assert.deepEqual(after.data.receipts, before.receipts);
+    assert.equal((await request(`${base}/ballot`, "GET", undefined, voter.token)).data.transactionHash, firstReceipt.transactionHash);
   });
 
   await t.test("a changed ledger configuration fails closed", async () => {
     await database.execute("UPDATE chain_lock SET instance_id = ? WHERE id = 1", [`0x${randomBytes(32).toString("hex")}`]);
     assert.equal((await request(`${base}/results`, "GET", undefined, admin.token)).status, 503);
   });
+  await t.test("permanent election deletion removes local voting records while confirmed blockchain results remain", async () => {
+    const before = Array.from(await contract.results(id(electionId)), values => Array.from(values));
+    assert.equal((await request(base, "DELETE", { confirmation: "DELETE" }, admin.token)).status, 200);
+    for (const actor of [admin, voter, auditor]) {
+      assert.equal((await request(base, "GET", undefined, actor.token)).status, 404);
+      assert.equal((await request(`${base}/results`, "GET", undefined, actor.token)).status, 404);
+    }
+    assert.equal((await request(`${base}/ballot`, "GET", undefined, voter.token)).status, 404);
+    for (const table of ["chain_transactions", "chain_attempts", "voting_credentials", "election_voters", "candidates"]) {
+      assert.equal((await database.execute(`SELECT COUNT(*) AS total FROM ${table} WHERE election_id = ?`, [electionId]))[0].total, 0);
+    }
+    assert.deepEqual(Array.from(await contract.results(id(electionId)), values => Array.from(values)), before);
+    assert.equal((await contract.queryFilter(contract.filters.BallotAccepted(id(electionId)))).length, 3);
+    assert.equal((await provider.getTransactionReceipt(firstReceipt.transactionHash)).status, 1);
+  });
+
 });

@@ -2,6 +2,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const Enrollment = require("../models/Enrollment");
 const { requireAuth } = require("../middleware/auth");
 
 const router = express.Router();
@@ -28,59 +29,20 @@ function publicUser(user) {
   };
 }
 
-router.post("/register", async (req, res) => {
+// Public enrollment is deliberately disabled, including for authenticated users.
+router.post("/register", (req, res) => res.status(403).json({
+  message: "Voter enrollment is managed by the election commission. Contact your administrator for an activation link.",
+}));
+
+router.post("/activate", async (req, res) => {
+  const { token, password } = req.body ?? {};
+  if (!Enrollment.validToken(token)) return res.status(400).json({ message: "This activation link is invalid or expired. Ask the election commission for a new link." });
+  if (typeof password !== "string" || password.length < 8 || Buffer.byteLength(password, "utf8") > 72) return res.status(400).json({ message: "Password must be at least 8 characters and at most 72 UTF-8 bytes" });
   try {
-    const { fullName, email, password } = req.body ?? {};
-
-    if (typeof fullName !== "string" || typeof email !== "string" || typeof password !== "string") {
-      return res
-        .status(400)
-        .json({ message: "Full name, email, and password are required" });
-    }
-
-    if (fullName.trim().length < 2 || fullName.trim().length > 80) {
-      return res.status(400).json({ message: "Full name must be between 2 and 80 characters" });
-    }
-    if (email.trim().length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      return res.status(400).json({ message: "Enter a valid email address" });
-    }
-    if (password.length < 8 || Buffer.byteLength(password, "utf8") > 72) {
-      return res
-        .status(400)
-        .json({ message: "Password must be at least 8 characters and at most 72 UTF-8 bytes" });
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-    const existingUser = await User.findByEmail(normalizedEmail);
-
-    if (existingUser) {
-      return res
-        .status(409)
-        .json({ message: "An account with this email already exists" });
-    }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-    const user = await User.create({
-      fullName: fullName.trim(),
-      email: normalizedEmail,
-      passwordHash,
-      role: "voter",
-      isApproved: false,
-    });
-
-    return res.status(201).json({
-      message: "Registration submitted for admin approval",
-      user: publicUser(user),
-    });
-  } catch (error) {
-    if (error.code === "ER_DUP_ENTRY") {
-      return res.status(409).json({ message: "An account with this email already exists" });
-    }
-    console.error("Registration failed:", error.message);
-    return res
-      .status(500)
-      .json({ message: "Registration could not be completed" });
-  }
+    const result = await Enrollment.activate(token, await bcrypt.hash(password, 12));
+    if (!result) return res.status(400).json({ message: "This activation link is invalid, expired, or already used. Ask the election commission for a new link." });
+    res.json({ message: result.isApproved ? "Account activated. You can now sign in." : "Account activated. The election commission must approve your account before you can sign in." });
+  } catch { res.status(500).json({ message: "Activation could not be completed. Please try again." }); }
 });
 
 router.post("/login", async (req, res) => {
@@ -98,8 +60,12 @@ router.post("/login", async (req, res) => {
     const passwordMatches =
       user && (await bcrypt.compare(password, user.passwordHash));
 
-    if (!user || !passwordMatches) {
+    if (!user || !passwordMatches || user.activationPending) {
       return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    if (user.role === "party" && !await User.hasActiveParty(user.id)) {
+      return res.status(403).json({ message: "This party registration is no longer active. Contact your administrator." });
     }
 
     if (user.role === "voter" && !user.isApproved) {

@@ -1,12 +1,18 @@
 const express = require("express");
 const User = require("../models/User");
 const Audit = require("../models/Audit");
-const bcrypt = require("bcryptjs");
+const Enrollment = require("../models/Enrollment");
+const Dashboard = require("../models/Dashboard");
 const { requireAuth, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
 
 router.use(requireAuth, requireRole("admin"));
+
+router.get("/dashboard", async (req, res) => {
+  try { res.json(await Dashboard.overview()); }
+  catch { res.status(503).json({ message: "The dashboard could not be loaded. Please try again." }); }
+});
 
 const validAuditId = value => typeof value === "string" && /^[1-9][0-9]{0,18}$/.test(value);
 router.delete("/audit/:id", async (req, res) => {
@@ -23,18 +29,28 @@ router.delete("/audit", async (req, res) => {
 });
 
 router.post("/voters", async (req, res) => {
-  const { fullName, email, password, isApproved } = req.body ?? {};
+  const { fullName, email, institutionalId, isApproved } = req.body ?? {};
   if (typeof fullName !== "string" || fullName.trim().length < 2 || fullName.trim().length > 80) return res.status(400).json({ message: "Full name must be between 2 and 80 characters" });
   if (typeof email !== "string" || email.trim().length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return res.status(400).json({ message: "Enter a valid email address" });
-  if (typeof password !== "string" || password.length < 8 || Buffer.byteLength(password, "utf8") > 72) return res.status(400).json({ message: "Password must be at least 8 characters and at most 72 UTF-8 bytes" });
+  if (typeof institutionalId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{1,63}$/.test(institutionalId.trim())) return res.status(400).json({ message: "Enter an institutional ID of 2–64 letters, numbers, dots, slashes, underscores, or hyphens" });
+  if (req.body.password !== undefined) return res.status(400).json({ message: "Voters must set their own password through activation" });
   if (typeof isApproved !== "boolean") return res.status(400).json({ message: "Choose whether the voter is approved" });
   try {
-    const voter = await User.registerVoter({ fullName, email, passwordHash: await bcrypt.hash(password, 12), isApproved }, req.account);
-    res.status(201).json({ voter, message: isApproved ? "Voter registered and approved" : "Voter registered, awaiting approval" });
+    const result = await Enrollment.enroll({ fullName, email, institutionalId, isApproved }, req.account);
+    res.status(201).json({ ...result, message: "Voter enrolled. Share the activation link with the voter." });
   } catch (error) {
-    if (error.code === "ER_DUP_ENTRY") return res.status(409).json({ message: "An account with this email already exists" });
+    if (error.code === "ER_DUP_ENTRY") return res.status(409).json({ message: "An account with this email or institutional ID already exists" });
     res.status(500).json({ message: "The voter could not be registered" });
   }
+});
+
+router.post("/voters/:id/activation", async (req, res) => {
+  if (!User.isValidId(req.params.id)) return res.status(400).json({ message: "Invalid voter ID" });
+  try {
+    const activation = await Enrollment.reissue(req.params.id, req.account);
+    if (!activation) return res.status(409).json({ message: "This voter is already activated or has no pending enrollment. Refresh the voter list." });
+    res.json({ activation, message: "New activation link created. The previous link is no longer valid." });
+  } catch { res.status(500).json({ message: "The activation link could not be created" }); }
 });
 
 router.get("/audit", async (req, res) => {

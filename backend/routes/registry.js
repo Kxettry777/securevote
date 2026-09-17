@@ -5,6 +5,7 @@ const Registry = require("../models/Registry");
 const { ElectionError } = require("../models/Election");
 const User = require("../models/User");
 const { normalizeBanner } = require("../media/banner");
+const electionSymbols = require("../media/election-symbols.json");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const router = express.Router();
 router.use(requireAuth, requireRole("admin", "party"), express.json({ limit: "6mb" }));
@@ -27,16 +28,20 @@ function identifier(value) {
 }
 router.param("id", (req, res, next, id) => User.isValidId(id) ? next() : res.status(400).json({ message: "Invalid identifier" }));
 router.get("/", handle(async (req, res) => res.json(await Registry.list(req.account))));
+router.get("/symbols", (req, res) => res.json({ symbols: electionSymbols }));
 async function party(req, res) {
   const body = req.body;
-  const data = { name: text(body?.name, "Party name", 2, 120), shortName: text(body?.shortName ?? "", "Abbreviation", 0, 16), symbol: text(body?.symbol, "Symbol name", 1, 60), manifesto: text(body?.manifesto ?? "", "Manifesto", 0, 4000) };
+  const chosenSymbol = body?.symbolId === undefined ? null : electionSymbols.find(symbol => symbol.id === body.symbolId);
+  if (body?.symbolId !== undefined && !chosenSymbol) throw new ElectionError(400, "Choose an election symbol from the available options");
+  const data = { name: text(body?.name, "Party name", 2, 120), shortName: text(body?.shortName ?? "", "Abbreviation", 0, 16), symbol: chosenSymbol?.name ?? text(body?.symbol, "Symbol name", 1, 60), manifesto: text(body?.manifesto ?? "", "Manifesto", 0, 4000) };
+  if (chosenSymbol) data.symbolImage = Buffer.from(chosenSymbol.image.split(",")[1], "base64");
   if (!req.params.id) {
     data.email = text(body?.email, "Account email", 3, 254).toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) throw new ElectionError(400, "Enter a valid party account email");
     if (typeof body?.password !== "string" || body.password.length < 8 || Buffer.byteLength(body.password, "utf8") > 72) throw new ElectionError(400, "Password must be at least 8 characters and at most 72 UTF-8 bytes");
     data.passwordHash = await bcrypt.hash(body.password, 12);
   }
-  if (body?.symbolImage !== undefined) {
+  if (!chosenSymbol && body?.symbolImage !== undefined) {
     const match = typeof body.symbolImage === "string" && /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(body.symbolImage);
     if (!match) throw new ElectionError(400, "Upload a PNG, JPEG, or WebP election symbol");
     const normalized = await normalizeBanner(Buffer.from(match[2], "base64"), match[1]);
@@ -57,6 +62,11 @@ async function candidate(req, res) {
 }
 router.post("/parties", requireRole("admin"), handle(party));
 router.patch("/parties/:id", requireRole("admin"), handle(party));
+router.delete("/parties/:id", requireRole("admin"), handle(async (req, res) => {
+  if (req.body?.confirmation !== "DELETE") throw new ElectionError(400, "Type DELETE to confirm party deletion");
+  await Registry.removeParty(req.params.id, req.account);
+  res.json({ message: "Party deleted. Its account is disabled; existing elections and results are preserved." });
+}));
 router.post("/roles", requireRole("admin"), handle(role));
 router.patch("/roles/:id", requireRole("admin"), handle(role));
 router.post("/candidates", requireRole("party"), handle(candidate));

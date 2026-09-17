@@ -63,6 +63,8 @@ async function verifySchema() {
   await execute("SELECT party_id FROM party_candidate_roles LIMIT 0");
   await execute("SELECT party_id FROM party_candidates LIMIT 0");
   await execute("SELECT election_id FROM removed_elections LIMIT 0");
+  await execute("SELECT user_id FROM voter_enrollments LIMIT 0");
+  await execute("SELECT party_id FROM deleted_parties LIMIT 0");
 }
 
 async function transaction(work) {

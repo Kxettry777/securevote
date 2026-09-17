@@ -22,6 +22,8 @@ async function requireAuth(req, res, next) {
   try {
     const user = await User.findById(claims.sub);
     if (!user) return res.status(401).json({ message: "User account no longer exists" });
+    if (user.role === "party" && !await User.hasActiveParty(user.id)) return res.status(403).json({ message: "This party registration is no longer active. Contact your administrator." });
+    if (user.activationPending) return res.status(403).json({ message: "Activate your account using the link provided by the election commission" });
     if (user.role === "voter" && !user.isApproved) {
       return res.status(403).json({ message: "Your account is awaiting admin approval" });
     }

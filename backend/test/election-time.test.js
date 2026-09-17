@@ -2,7 +2,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
 test("countdown handles start/end boundaries, days, subsecond rounding, and elapsed time", async () => {
-  const { electionPhase, countdownParts } = await import("../../frontend/src/electionTime.ts");
+  const { electionPhase, countdownParts } = await import("../../frontend/src/electionTime.js");
   const starts = "2030-01-01T00:00:00.000Z", ends = "2030-01-03T01:02:03.000Z";
   const start = Date.parse(starts), end = Date.parse(ends);
   assert.equal(electionPhase(starts, ends, start - 1), "upcoming");

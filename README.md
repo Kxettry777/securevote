@@ -7,7 +7,11 @@ see [DEVELOPMENT.md](DEVELOPMENT.md).
 credentials, Solidity ballot recording, receipt recovery, duplicate-vote protection,
 closed-election results, result reconciliation, and administrative audit logs.
 Run `npm.cmd run dev` from this directory after setup to start the local stack.
-The sections below describe the broader proposal; optional AI liveness remains planned.
+Voter enrollment is now commission-controlled: admins verify and enroll voters,
+then privately share a 24-hour, single-use activation link so each voter sets their
+own password. Public self-registration is disabled. Automatic invitation delivery
+and AI-assisted verification remain planned. The sections below describe the
+broader proposal; see DEVELOPMENT.md for the implemented workflow.
 
 ## Privacy-Aware Blockchain-Based E-Voting System with Optional AI Liveness Verification
 
@@ -495,7 +499,7 @@ or all forms of endpoint compromise. These are documented limitations rather tha
 
 ## 15. Technology Stack
 
-- Frontend: React, TypeScript, Vite, and browser webcam APIs.
+- Frontend: React, JavaScript/JSX, Vite, and browser webcam APIs (planned for optional liveness).
 - Backend: Node.js, Express, JWT-based authentication, and bcrypt.
 - Database: MySQL and mysql2.
 - AI integration: Python, FastAPI, OpenCV, and MediaPipe.
