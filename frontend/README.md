@@ -24,9 +24,14 @@ unused imports, and Fast Refresh exports. It uses JavaScript tooling instead of
 the previous native Oxlint binary, which Windows Application Control blocked.
 The React Compiler remains enabled in Vite.
 
-The current workflow includes commission enrollment, voter account activation,
-approval, party registration and symbol selection, nominations, elections,
-blockchain voting, and results. AI facial liveness is deferred.
+The current workflow includes an admin dashboard and voter list, commission
+enrollment, voter account activation, approval, party registration and deletion,
+symbol selection, nominations, elections, blockchain voting, and results.
+AI facial liveness is deferred.
+
+Add `src/assets/profile.jpg` to show the shared profile photograph on the
+**Secure Vote** login card and signed-in account header. A placeholder is displayed
+until it is added. Rebuild for production after adding or replacing the image.
 
 See [DEVELOPMENT.md](../DEVELOPMENT.md) for setup, verification results, and the
 complete demonstration.

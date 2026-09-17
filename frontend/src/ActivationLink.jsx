@@ -15,6 +15,6 @@ export function ActivationLink({ activation, name, onDismiss }) {
                 setMessage("Select the link above and copy it manually.");
             }
         }}>Copy activation link</button><span className="muted" role="status">{message}</span></div>
-    <p className="muted">No email has been sent. You can replace this link from Voter management if needed.</p>
+    <p className="muted">No email has been sent. You can replace this link from Voter list if needed.</p>
   </section>;
 }

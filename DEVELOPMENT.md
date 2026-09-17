@@ -6,6 +6,8 @@ SecureVote now supports the complete local voting workflow:
 
 - Commission-controlled voter enrollment, voter-chosen passwords, login, expiring sessions, and administrator approval/revocation.
 - Admin registration of political parties with symbol images and dedicated party sign-in accounts.
+- An admin dashboard with live voter, party, and election counts, plus a dedicated voter list.
+- Confirmed party deletion that disables party login and preserves saved elections and results.
 - Party-owned candidate nominations, separate role hierarchies per party, and complete-roster submission.
 - Admin voter enrollment with unique institutional IDs, immediate approval or pending review, and expiring single-use activation links.
 - Removal/restoration of ended elections and confirmed deletion of individual or bulk audit entries.
@@ -76,11 +78,29 @@ JavaScript transport, which is sufficient for this local prototype.
 
 ## Demonstration
 
+### Login, profile image, and admin dashboard
+
+The login card is titled **Secure Vote**, with the introductory text, enrollment
+footer, and routine sign-out message removed. Activation instructions and actual
+authentication errors remain visible when needed.
+
+Place the shared profile image at `frontend/src/assets/profile.jpg`. It appears
+on the login card and in the signed-in account header, cropped to a circle. Until
+the file is present, the interface shows an SV placeholder. Rebuild the frontend
+after adding or replacing the image for a production deployment.
+
+Administrators land on **Dashboard** after login or session restoration. The
+dashboard shows voter totals, pending approvals and activations, registered
+parties, submitted rosters, and upcoming, active, and completed elections. Use
+**Voter list** to search voters, approve/revoke access, or replace activation links.
+The dashboard's quick actions also open voter enrollment, party management,
+election creation, and the audit log. `GET /api/admin/dashboard` requires an admin.
+
 ### Party elections, banners, and countdowns
 
 Use the sidebar in this order:
 
-1. **Register political party** (admin): enter the party name, abbreviation,
+1. **Registered parties → Register party** (admin): enter the party name, abbreviation,
    and manifesto, then choose an election symbol from the visual gallery.
    Its name and image are saved together. Existing uploaded symbols can be kept
    when editing a party. Supply a unique party email and initial password. The account, hashed
@@ -168,6 +188,13 @@ those services are not already running separately. Keep using the existing ledge
 
 ### Admin account and history management
 
+- In **Registered parties**, choose **Delete party**, review the confirmation,
+  and type `DELETE`. The party disappears from the registry and future election
+  selection, and its account loses both login and existing-session access.
+  Saved ballots, candidates, votes, results, and audit history remain intact.
+  Deletion does not withdraw a party from an already-created election. The party
+  name and account email remain reserved for historical consistency. There is no
+  restore control in the current UI.
 - **Register voter** opens a dedicated form for a full name, verified email,
   unique institutional ID, and approval status. Confirm the identity check against
   the official roster, then privately share the generated activation link. The
@@ -193,6 +220,13 @@ link), `DELETE /api/elections/:id`, `POST /api/elections/:id/restore`,
 `{ confirmation: "DELETE", throughId }`, using `latestId` from the audit list).
 All require an administrator account.
 
+Party deletion uses `DELETE /api/registry/parties/:id` with body
+`{ confirmation: "DELETE" }`. The additive `025_deleted_parties.sql` migration
+records deletion without removing rows referenced by election snapshots. Registry
+edits and snapshot creation lock and recheck the party, and deletion is audited
+atomically. Run `npm.cmd --prefix backend run db:setup` and restart the backend
+when updating an existing installation. The migration has been applied locally.
+
 Database setup now migrates existing global role definitions and nominations into
 party-specific tables in a transaction. Candidate IDs and submitted rosters are
 preserved. A migration marker prevents later setup runs from overwriting party
@@ -205,7 +239,7 @@ with the updated code after applying `npm.cmd --prefix backend run db:setup`.
    unique institutional ID. Choose **Awaiting approval**, confirm the roster check,
    and enroll. Privately share the generated activation link with the voter.
 2. Open the link in a separate session and set a password. Confirm that login remains
-   blocked until the admin approves the account in **Voter management**.
+   blocked until the admin approves the account in **Voter list**.
 3. Register two or more party accounts and their symbol images. Sign in as each
    party, fill all candidate positions, and submit its roster.
 4. As admin, create an election from the submitted parties starting a few minutes
@@ -248,7 +282,7 @@ address bar; after a refresh, reopen the original link to continue.
 `POST /api/auth/activate` accepts `{ token, password }`, hashes the voter-chosen
 password, and atomically consumes the token. It never approves the account or
 assigns elections. Expired, replaced, and used tokens are rejected. The voter
-then signs in normally after commission approval. From **Voter management**,
+then signs in normally after commission approval. From **Voter list**,
 admins can create a replacement using `POST /api/admin/voters/:id/activation`;
 this invalidates the previous link and works only for unactivated enrollments.
 This endpoint cannot reset an activated account's password.
@@ -351,16 +385,21 @@ replacement, and preservation of existing images. Browser visual/interaction
 verification still needs the manual demo above because no browser automation
 surface was connected during verification.
 
-Latest verification (2026-09-17): all 46 backend test cases passed (18 unit/HTTP/
-contract cases and 28 MySQL/HTTP/ledger integration cases). The full
+Latest verification (2026-09-17): all 51 backend test cases passed (18 unit/HTTP/
+contract cases and 33 MySQL/HTTP/ledger integration cases). The full
 `npm.cmd run check` command passed, including ESLint with zero warnings. The JavaScript/JSX
-production frontend build passed and matches the pre-conversion application bundle.
+production frontend build passed. The added checks cover dashboard authorization
+and counts, deletion confirmation, rollback when auditing fails, disabled party
+sessions, and preservation of election snapshots and confirmed blockchain results.
 All 12 catalog symbols have unique IDs and
 valid WebP images. The running application database includes the enrollment
 migration, and the running API returns 403 for public registration.
 The running Vite server also serves the JSX entry and converted application modules,
 and its API proxy reports a connected database. This HTTP smoke check does not
 replace the browser visual/interaction checks described above.
+The running API also passed an administrator login and dashboard request after
+the party-deletion migration was applied. The profile photograph is supplied by
+the site owner and was not present during these checks.
 The frontend now uses ESLint 10 instead of the native Oxlint binary that Windows
 Application Control blocked. No Windows security settings were changed. The
 TypeScript compiler, TypeScript configuration files, and direct type-package
