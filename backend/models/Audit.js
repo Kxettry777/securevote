@@ -1,6 +1,6 @@
 const database = require("../database");
 
-// Administrative actions only. Never put ballot choices, credentials, or voter
+// Account lifecycle and administrative actions only. Never put ballot choices, credentials, or voter
 // transaction references into the identity-linked administrative audit log.
 async function record(query, actor, action, targetId, electionId = null) {
   if (!actor) return;

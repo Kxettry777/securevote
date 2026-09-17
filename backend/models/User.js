@@ -2,10 +2,12 @@ const { randomUUID } = require("node:crypto");
 const database = require("../database");
 const Audit = require("./Audit");
 
-const publicColumns = "id, full_name AS fullName, email, role, is_approved AS isApproved, created_at AS createdAt, updated_at AS updatedAt";
+const publicColumns = `id, full_name AS fullName, email, role, is_approved AS isApproved, created_at AS createdAt, updated_at AS updatedAt,
+  (SELECT institutional_id FROM voter_enrollments WHERE user_id = users.id) AS institutionalId,
+  EXISTS(SELECT 1 FROM voter_enrollments WHERE user_id = users.id AND activated_at IS NULL) AS activationPending`;
 
 function toUser(row) {
-  return row ? { ...row, isApproved: Boolean(row.isApproved) } : null;
+  return row ? { ...row, isApproved: Boolean(row.isApproved), activationPending: Boolean(row.activationPending) } : null;
 }
 
 function isValidId(id) {
@@ -36,16 +38,6 @@ async function listVoters() {
   return rows.map(toUser);
 }
 
-async function registerVoter({ fullName, email, passwordHash, isApproved }, actor) {
-  const id = randomUUID();
-  await database.transaction(async query => {
-    await query("INSERT INTO users (id, full_name, email, password_hash, role, is_approved) VALUES (?, ?, ?, ?, 'voter', ?)", [id, fullName.trim(), email.trim().toLowerCase(), passwordHash, isApproved]);
-    await Audit.record(query, actor, "voter_registered_by_admin", id);
-    if (isApproved) await Audit.record(query, actor, "voter_approved", id);
-  });
-  return findById(id);
-}
-
 async function setVoterApproval(id, isApproved, actor) {
   return database.transaction(async query => {
     const [existing] = await query("SELECT is_approved AS isApproved FROM users WHERE id = ? AND role = 'voter' FOR UPDATE", [id]);
@@ -57,4 +49,10 @@ async function setVoterApproval(id, isApproved, actor) {
   });
 }
 
-module.exports = { isValidId, findByEmail, findById, create, listVoters, setVoterApproval, registerVoter };
+async function hasActiveParty(id) {
+  const rows = await database.execute(`SELECT a.party_id FROM party_accounts a
+    WHERE a.user_id = ? AND NOT EXISTS (SELECT 1 FROM deleted_parties d WHERE d.party_id = a.party_id)`, [id]);
+  return rows.length > 0;
+}
+
+module.exports = { isValidId, findByEmail, findById, create, listVoters, setVoterApproval, hasActiveParty };

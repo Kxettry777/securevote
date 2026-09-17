@@ -5,7 +5,7 @@
   --body: "DM Sans", "Trebuchet MS", sans-serif;
   font-family: var(--body);
   color: #1a2824;
-  background: #f3f5f1;
+  background: #f5f7fa;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -18,7 +18,7 @@
 
 html {
   min-width: 320px;
-  background: #f3f5f1;
+  background: #f5f7fa;
 }
 
 body {
@@ -34,7 +34,7 @@ a {
 
 button:focus-visible,
 a:focus-visible {
-  outline: 3px solid rgba(91, 132, 78, 0.45);
+  outline: 3px solid rgba(36, 86, 142, 0.35);
   outline-offset: 3px;
 }
 

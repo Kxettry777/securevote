@@ -218,6 +218,18 @@ test("complete voting workflow with real MySQL, HTTP, and Ethereum receipts", { 
     assert.equal(restored.data.totalVotes, before.totalVotes);
   });
 
+  await t.test("deleting a registered party preserves confirmed votes and published results", async () => {
+    const before = (await request(`${base}/results`, "GET", undefined, admin.token)).data;
+    assert.equal((await request(`/registry/parties/${parties[0].id}`, "DELETE", { confirmation: "DELETE" }, admin.token)).status, 200);
+    const after = await request(`${base}/results`, "GET", undefined, voter.token);
+    assert.equal(after.status, 200);
+    assert.equal(after.data.status, "verified");
+    assert.equal(after.data.totalVotes, before.totalVotes);
+    assert.deepEqual(after.data.parties, before.parties);
+    assert.deepEqual(after.data.receipts, before.receipts);
+    assert.equal((await request(`${base}/ballot`, "GET", undefined, voter.token)).data.transactionHash, firstReceipt.transactionHash);
+  });
+
   await t.test("a changed ledger configuration fails closed", async () => {
     await database.execute("UPDATE chain_lock SET instance_id = ? WHERE id = 1", [`0x${randomBytes(32).toString("hex")}`]);
     assert.equal((await request(`${base}/results`, "GET", undefined, admin.token)).status, 503);

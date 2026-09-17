@@ -4,10 +4,10 @@
 
 SecureVote now supports the complete local voting workflow:
 
-- Registration, password hashing, login, expiring sessions, and administrator approval/revocation.
+- Commission-controlled voter enrollment, voter-chosen passwords, login, expiring sessions, and administrator approval/revocation.
 - Admin registration of political parties with symbol images and dedicated party sign-in accounts.
 - Party-owned candidate nominations, separate role hierarchies per party, and complete-roster submission.
-- Admin voter registration with immediate approval or pending review.
+- Admin voter enrollment with unique institutional IDs, immediate approval or pending review, and expiring single-use activation links.
 - Removal/restoration of ended elections and confirmed deletion of individual or bulk audit entries.
 - Election creation from 2 to 100 submitted party rosters, immutable ballot snapshots, and approved voter assignments.
 - Administrator banner uploads with preview, replacement, removal, and protected image access.
@@ -19,7 +19,9 @@ SecureVote now supports the complete local voting workflow:
 - Read-only election/results access for candidate and auditor roles. Only admins see assigned voter lists.
 - An admin-only audit log for election, candidate, assignment, approval, and revocation changes.
 
-Optional AI liveness is not implemented. The README remains the broader project proposal;
+AI facial liveness is deferred and is not part of the current milestone.
+The frontend uses JavaScript and JSX; TypeScript compilation is not required.
+The README remains the broader project proposal;
 its planned features should not be read as a claim that every module is complete.
 
 ## Quick start (Windows)
@@ -78,12 +80,19 @@ JavaScript transport, which is sufficient for this local prototype.
 
 Use the sidebar in this order:
 
-1. **Register political party** (admin): register the party name, abbreviation,
-   manifesto, symbol name, and a PNG/JPEG/WebP symbol image (up to 4 MB / 16 million
-   pixels). Supply a unique party email and initial password. The account, hashed
+1. **Register political party** (admin): enter the party name, abbreviation,
+   and manifesto, then choose an election symbol from the visual gallery.
+   Its name and image are saved together. Existing uploaded symbols can be kept
+   when editing a party. Supply a unique party email and initial password. The account, hashed
    password, party, default roles, and audit entry are saved together. Share the
    credentials with the intended representative outside the app; no email is sent.
-   Public registration creates voter accounts only.
+   Public voter registration is disabled. Voters activate commission-enrolled accounts.
+
+   Symbol choices come from `GET /api/registry/symbols`; create/update requests
+   submit `symbolId`. The backend uses the corresponding catalog name and image,
+   ignoring conflicting client-supplied names or images. The older image-upload
+   API remains compatible with existing clients. Catalog artwork is derived from
+   Font Awesome Free; attribution is in `backend/media/ELECTION_SYMBOLS_LICENSE.txt`.
 2. **Candidate roles** (admin): select a political party, then customize its
    President, Vice president, and Secretary positions or add more roles. Each party
    has its own names and hierarchy ranks; lower ranks appear first. A party must
@@ -131,18 +140,21 @@ Registry API (authenticated):
 
 - `GET /api/registry`: admin sees all parties/rosters; a party sees only its own.
 - `POST /api/registry/parties`: admin creates party + account using `name`,
-  `shortName`, `symbol`, `symbolImage` (image data URL), `manifesto`, `email`,
-  and `password`. `PATCH /api/registry/parties/:id` edits party identity and
-  optionally replaces its image; it does not change account credentials.
+  `shortName`, `symbolId` (from `GET /api/registry/symbols`), `manifesto`, `email`,
+  and `password`. The selected catalog entry supplies both the symbol name and
+  image. Legacy clients may instead supply `symbol` and `symbolImage` (image data
+  URL). `PATCH /api/registry/parties/:id` edits party identity and optionally
+  replaces its symbol; omit `symbolId` and `symbolImage` and supply the current
+  `symbol` name to keep an existing image. It does not change account credentials.
 - `POST/PATCH /api/registry/roles[/:id]`: admin supplies `partyId`, `name`, and
-  integer hierarchy `rank` (1?100). Names and ranks are unique within that party.
+  integer hierarchy `rank` (1–100). Names and ranks are unique within that party.
   A nomination cannot use a role owned by another party.
 - `POST/PATCH /api/registry/candidates[/:id]`: party supplies `partyId`, `roleId`,
   `fullName`, `biography`. Ownership is verified on the server for every write.
 - `DELETE /api/registry/candidates/:id`: party removes its own nomination.
 - `POST /api/registry/submit`: party submits its complete roster.
 - `POST /api/elections`: admin supplies existing schedule fields plus `partyIds`
-  (2?100 distinct registered, submitted parties). Creation is atomic.
+  (2–100 distinct registered, submitted parties). Creation is atomic.
 
 The former election-local party/candidate mutation endpoints now reject edits
 with 409. Existing read aliases and contract identifiers remain compatible.
@@ -156,10 +168,13 @@ those services are not already running separately. Keep using the existing ledge
 
 ### Admin account and history management
 
-- **Register voter** opens a dedicated form for a full name, email, initial
-  password, and approval status. The admin can approve immediately or leave the
+- **Register voter** opens a dedicated form for a full name, verified email,
+  unique institutional ID, and approval status. Confirm the identity check against
+  the official roster, then privately share the generated activation link. The
+  voter sets their own password. The admin can approve immediately or leave the
   account pending. This endpoint always creates a voter, regardless of submitted
-  role fields. The voter still needs election assignment before voting.
+  role fields. Activation, approval, and election assignment are required before
+  voting.
 - In **Elections**, **Remove election** is available for ended elections. A
   confirmation explains that it disappears from participant views. **Removed
   elections** lets admins inspect and restore it. Upcoming/active elections cannot
@@ -170,8 +185,9 @@ those services are not already running separately. Keep using the existing ledge
   Deletion is permanent. New activity after the snapshot is retained, and clearing
   audit history does not delete elections or recorded votes.
 
-API additions: `POST /api/admin/voters` (`fullName`, `email`, `password`,
-`isApproved`), `DELETE /api/elections/:id`, `POST /api/elections/:id/restore`,
+API additions: `POST /api/admin/voters` (`fullName`, `email`, `institutionalId`,
+`isApproved`), `POST /api/admin/voters/:id/activation` (replace an unused activation
+link), `DELETE /api/elections/:id`, `POST /api/elections/:id/restore`,
 `GET /api/elections?removed=true`, `DELETE /api/admin/audit/:id` (body
 `{ confirmation: "DELETE" }`), and `DELETE /api/admin/audit` (body
 `{ confirmation: "DELETE", throughId }`, using `latestId` from the audit list).
@@ -185,8 +201,11 @@ with the updated code after applying `npm.cmd --prefix backend run db:setup`.
 
 ### Walk through a vote
 
-1. Register a voter and confirm that login is blocked before approval.
-2. Sign in as the admin, open **Voter management**, and approve the registration.
+1. As admin, open **Register voter**, enter the voter's name, verified email, and
+   unique institutional ID. Choose **Awaiting approval**, confirm the roster check,
+   and enroll. Privately share the generated activation link with the voter.
+2. Open the link in a separate session and set a password. Confirm that login remains
+   blocked until the admin approves the account in **Voter management**.
 3. Register two or more party accounts and their symbol images. Sign in as each
    party, fill all candidate positions, and submit its roster.
 4. As admin, create an election from the submitted parties starting a few minutes
@@ -204,9 +223,46 @@ UTC. Details, candidates, and assignments lock when the election starts. Global
 voter approval can still be revoked; the API rechecks it before preparing a ballot.
 A submission already authorized and signed may still be mined after later revocation.
 
-Candidate/auditor accounts are supported by the API and frontend but are not
-self-selectable at registration. Provision their roles through a trusted local
-administrator/database workflow. Voter registration never grants elevated roles.
+Candidate/auditor accounts are supported by the API and frontend. Provision their
+roles through a trusted local administrator/database workflow. Voter enrollment
+and activation never grant elevated roles.
+
+### Voter enrollment and activation
+
+Only an authenticated admin can enroll voters through `POST /api/admin/voters`.
+Supply `{ fullName, email, institutionalId, isApproved }`; the endpoint rejects an
+admin-supplied password. Institutional IDs are trimmed, normalized to uppercase,
+and unique across new enrollments. They accept 2–64 ASCII letters, numbers, dots,
+slashes, underscores, or hyphens, starting with a letter or number. Admins must
+verify identity and eligibility against the official institutional roster.
+
+Enrollment returns `{ voter, activation: { token, expiresAt } }`. The UI builds a
+link using the current site's origin and `#activate=<token>`. Share this privately
+through a verified contact channel. **No email is sent automatically.** Use a site
+address reachable by the voter; a localhost link only works on the same computer.
+The raw activation token is shown only when issued, kept in component memory,
+and never included in voter lists or audit logs. The database stores its SHA-256
+hash. Links expire after 24 hours. The activation page removes the token from the
+address bar; after a refresh, reopen the original link to continue.
+
+`POST /api/auth/activate` accepts `{ token, password }`, hashes the voter-chosen
+password, and atomically consumes the token. It never approves the account or
+assigns elections. Expired, replaced, and used tokens are rejected. The voter
+then signs in normally after commission approval. From **Voter management**,
+admins can create a replacement using `POST /api/admin/voters/:id/activation`;
+this invalidates the previous link and works only for unactivated enrollments.
+This endpoint cannot reset an activated account's password.
+
+`POST /api/auth/register` now returns 403. Existing accounts retain their passwords,
+approval, and election access; they are not forced through activation. Their
+institutional ID is displayed as not recorded. Duplicate-ID enforcement applies
+to the new enrollment records; existing identities still need manual roster checks.
+Enrollment, approval, link replacement, and activation have audit records.
+
+Apply the additive `024_voter_enrollments.sql` migration with
+`npm.cmd --prefix backend run db:setup`, then restart the backend. The full
+`npm.cmd run dev` launcher also applies this migration. AI identity checks, roster
+imports, and automatic invitation delivery remain future work.
 
 ## Credential and transaction design
 
@@ -275,7 +331,7 @@ npm.cmd run check
 ```
 
 This runs authentication and contract tests, MySQL/HTTP/blockchain integration
-checks, frontend lint, TypeScript checking, and a production frontend build.
+checks, ESLint checks for JavaScript/JSX and React hooks, and a production frontend build.
 
 Integration tests create uniquely named `securevote_test_*` databases and remove
 only those databases afterward. They do not modify the application database.
@@ -287,13 +343,37 @@ transactional administrative auditing, locked elections, invalid candidates,
 credential rotation/expiry, credential theft between accounts, revocation,
 concurrent duplicate submissions, interrupted broadcast recovery, mined failure
 and explicit retry, closed results, privacy of API responses, and ledger mismatch
-rejection. Browser visual/interaction verification still needs the manual demo
-above because no browser automation surface was available in this session.
+rejection. Enrollment checks also cover duplicate institutional IDs and rollback,
+unactivated account access, expired/replaced activation links, concurrent single-use
+activation, approval separation, and exclusion of tokens from voter lists. Symbol
+checks cover catalog selection, mismatched client names/images, unknown choices,
+replacement, and preservation of existing images. Browser visual/interaction
+verification still needs the manual demo above because no browser automation
+surface was connected during verification.
 
-Latest verification: 41 backend test cases passed, including real MySQL/HTTP and
-local Ethereum integration; TypeScript and the production frontend build passed.
-The installed oxlint native binary is blocked by Windows Application Control, so
-`npm run check` currently stops at lint. No Windows security settings were changed.
+Latest verification (2026-09-17): all 46 backend test cases passed (18 unit/HTTP/
+contract cases and 28 MySQL/HTTP/ledger integration cases). The full
+`npm.cmd run check` command passed, including ESLint with zero warnings. The JavaScript/JSX
+production frontend build passed and matches the pre-conversion application bundle.
+All 12 catalog symbols have unique IDs and
+valid WebP images. The running application database includes the enrollment
+migration, and the running API returns 403 for public registration.
+The running Vite server also serves the JSX entry and converted application modules,
+and its API proxy reports a connected database. This HTTP smoke check does not
+replace the browser visual/interaction checks described above.
+The frontend now uses ESLint 10 instead of the native Oxlint binary that Windows
+Application Control blocked. No Windows security settings were changed. The
+TypeScript compiler, TypeScript configuration files, and direct type-package
+dependencies have been removed; `jsconfig.json` provides JavaScript editor support.
+
+To run checks separately:
+
+```powershell
+npm.cmd --prefix backend test
+npm.cmd --prefix backend run test:mysql
+npm.cmd --prefix frontend run lint
+npm.cmd --prefix frontend run build
+```
 
 ## API additions
 
@@ -303,7 +383,7 @@ approval and election assignment.
 | Method | Route | Access / behavior |
 | --- | --- | --- |
 | POST | `/api/elections/:id/credentials` | Voter: rotate a short-lived voting token |
-| POST | `/api/elections/:id/ballots` | Voter: submit `{ candidateId, credential }`; returns a receipt/status |
+| POST | `/api/elections/:id/ballots` | Voter: submit `{ partyId, credential }`; returns a receipt/status |
 | GET | `/api/elections/:id/ballot` | Voter: recover/reconcile this account's submission |
 | GET | `/api/elections/:id/results` | Admin, auditor, candidate, or assigned voter: closed results and audit |
 | GET | `/api/admin/audit?before=123` | Admin: newest 50 administrative actions, with a pagination cursor |
@@ -320,7 +400,7 @@ assigned voter lists.
 
 ## Remaining scope
 
-- Optional challenge-response liveness service and its evaluation.
+- Deferred: optional challenge-response liveness service and its evaluation.
 - Manual desktop/mobile browser QA and a recorded demonstration.
 - Project report updates, performance measurements, and final presentation.
 - Production deployment and formal anonymity are outside this prototype's scope.
